@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Three.js Drawing on Plane</title>
+  <title>Three.js AR Drawing</title>
   <style>
-    body { margin: 0; }
+    body { margin: 0; overflow: hidden; }
     canvas { display: block; touch-action: none; }
   </style>
 </head>
@@ -12,100 +12,121 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js"
+        "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/"
       }
     }
   </script>
   <script type="module">
     import * as THREE from 'three';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
 
-    let scene, camera, renderer, plane, canvas, context, texture;
+    let scene, camera, renderer;
+    let canvas, ctx, texture, plane;
     let isDrawing = false;
-    let lastX = 0, lastY = 0;
+    let lastX, lastY;
+
+    init();
 
     function init() {
-      // Set up scene
       scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.z = 5;
 
-      // Set up renderer
-      renderer = new THREE.WebGLRenderer();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
 
-      // Create canvas
+      document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
+
       canvas = document.createElement('canvas');
       canvas.width = 1024;
       canvas.height = 1024;
-      context = canvas.getContext('2d');
-      context.fillStyle = 'white';
-      context.fillRect(0, 0, canvas.width, canvas.height);
+      ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Create texture from canvas
       texture = new THREE.CanvasTexture(canvas);
 
-      // Create plane geometry and material
-      const geometry = new THREE.PlaneGeometry(4, 4);
-      const material = new THREE.MeshBasicMaterial({ map: texture });
+      const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+      const geometry = new THREE.PlaneGeometry(1, 1);
       plane = new THREE.Mesh(geometry, material);
+      plane.rotation.x = -Math.PI / 2;
+      plane.visible = false;
       scene.add(plane);
 
-      // Add event listeners for drawing
-      renderer.domElement.addEventListener('pointerdown', onPointerDown);
-      renderer.domElement.addEventListener('pointermove', onPointerMove);
-      renderer.domElement.addEventListener('pointerup', onPointerUp);
-      renderer.domElement.addEventListener('pointerout', onPointerUp);
+      // Touch draw events
+      renderer.domElement.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        isDrawing = true;
+        const pos = getCanvasCoords(e.touches[0]);
+        lastX = pos.x;
+        lastY = pos.y;
+      });
 
-      animate();
+      renderer.domElement.addEventListener('touchmove', (e) => {
+        if (!isDrawing || e.touches.length !== 1) return;
+        const pos = getCanvasCoords(e.touches[0]);
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.closePath();
+        lastX = pos.x;
+        lastY = pos.y;
+        texture.needsUpdate = true;
+      });
+
+      renderer.domElement.addEventListener('touchend', () => isDrawing = false);
+
+      renderer.setAnimationLoop(render);
     }
 
-    function getCanvasCoordinates(event) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-      const vector = new THREE.Vector3(x, y, 0.5);
-      vector.unproject(camera);
-      const dir = vector.sub(camera.position).normalize();
-      const distance = -camera.position.z / dir.z;
-      const pos = camera.position.clone().add(dir.multiplyScalar(distance));
-      const canvasX = (pos.x + 2) / 4 * canvas.width;
-      const canvasY = (1 - (pos.y + 2) / 4) * canvas.height;
-      return { x: canvasX, y: canvasY };
-    }
+    let hitTestSource = null;
+    let hitTestRequested = false;
 
-    function onPointerDown(event) {
-      isDrawing = true;
-      const { x, y } = getCanvasCoordinates(event);
-      lastX = x;
-      lastY = y;
-    }
+    function render(timestamp, frame) {
+      if (frame) {
+        const refSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
 
-    function onPointerMove(event) {
-      if (!isDrawing) return;
-      const { x, y } = getCanvasCoordinates(event);
-      context.beginPath();
-      context.moveTo(lastX, lastY);
-      context.lineTo(x, y);
-      context.strokeStyle = 'black';
-      context.lineWidth = 5;
-      context.stroke();
-      context.closePath();
-      lastX = x;
-      lastY = y;
-      texture.needsUpdate = true;
-    }
+        if (!hitTestRequested) {
+          session.requestReferenceSpace('viewer').then((refSpace) => {
+            session.requestHitTestSource({ space: refSpace }).then((source) => {
+              hitTestSource = source;
+            });
+          });
+          session.addEventListener('end', () => {
+            hitTestSourceRequested = false;
+            hitTestSource = null;
+          });
+          hitTestRequested = true;
+        }
 
-    function onPointerUp() {
-      isDrawing = false;
-    }
+        if (hitTestSource) {
+          const hitTestResults = frame.getHitTestResults(hitTestSource);
+          if (hitTestResults.length > 0 && !plane.visible) {
+            const hit = hitTestResults[0];
+            const pose = hit.getPose(refSpace);
+            plane.visible = true;
+            plane.position.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
+            plane.lookAt(plane.position.x, plane.position.y + 1, plane.position.z); // Face up
+          }
+        }
+      }
 
-    function animate() {
-      requestAnimationFrame(animate);
       renderer.render(scene, camera);
     }
 
-    init();
+    function getCanvasCoords(touch) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const x = (touch.clientX - rect.left) / rect.width;
+      const y = (touch.clientY - rect.top) / rect.height;
+      return { x: x * canvas.width, y: y * canvas.height };
+    }
   </script>
 </body>
 </html>
