@@ -23,6 +23,8 @@
 
     let scene, camera, renderer;
     let canvas, ctx, texture, plane;
+    let raycaster = new THREE.Raycaster();
+    let touchVec2 = new THREE.Vector2();
     let isDrawing = false;
     let lastX, lastY;
 
@@ -30,7 +32,6 @@
 
     function init() {
       scene = new THREE.Scene();
-
       camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -40,43 +41,47 @@
 
       document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
 
+      // Create drawing canvas and texture
       canvas = document.createElement('canvas');
       canvas.width = 1024;
       canvas.height = 1024;
       ctx = canvas.getContext('2d');
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-
       texture = new THREE.CanvasTexture(canvas);
 
-      const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
       const geometry = new THREE.PlaneGeometry(1, 1);
+      const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
       plane = new THREE.Mesh(geometry, material);
       plane.rotation.x = -Math.PI / 2;
       plane.visible = false;
       scene.add(plane);
 
-      // Touch draw events
+      // Touch events
       renderer.domElement.addEventListener('touchstart', (e) => {
         if (e.touches.length !== 1) return;
+        const uv = getUVFromTouch(e.touches[0]);
+        if (!uv) return;
         isDrawing = true;
-        const pos = getCanvasCoords(e.touches[0]);
-        lastX = pos.x;
-        lastY = pos.y;
+        lastX = uv.x * canvas.width;
+        lastY = (1 - uv.y) * canvas.height;
       });
 
       renderer.domElement.addEventListener('touchmove', (e) => {
         if (!isDrawing || e.touches.length !== 1) return;
-        const pos = getCanvasCoords(e.touches[0]);
+        const uv = getUVFromTouch(e.touches[0]);
+        if (!uv) return;
+        const x = uv.x * canvas.width;
+        const y = (1 - uv.y) * canvas.height;
         ctx.beginPath();
         ctx.moveTo(lastX, lastY);
-        ctx.lineTo(pos.x, pos.y);
+        ctx.lineTo(x, y);
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 5;
         ctx.stroke();
         ctx.closePath();
-        lastX = pos.x;
-        lastY = pos.y;
+        lastX = x;
+        lastY = y;
         texture.needsUpdate = true;
       });
 
@@ -113,7 +118,7 @@
             const pose = hit.getPose(refSpace);
             plane.visible = true;
             plane.position.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
-            plane.lookAt(plane.position.x, plane.position.y + 1, plane.position.z); // Face up
+            plane.lookAt(plane.position.x, plane.position.y + 1, plane.position.z);
           }
         }
       }
@@ -121,12 +126,19 @@
       renderer.render(scene, camera);
     }
 
-    function getCanvasCoords(touch) {
+    function getUVFromTouch(touch) {
       const rect = renderer.domElement.getBoundingClientRect();
-      const x = (touch.clientX - rect.left) / rect.width;
-      const y = (touch.clientY - rect.top) / rect.height;
-      return { x: x * canvas.width, y: y * canvas.height };
+      touchVec2.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+      touchVec2.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(touchVec2, camera);
+      const intersects = raycaster.intersectObject(plane);
+      if (intersects.length > 0 && intersects[0].uv) {
+        return intersects[0].uv;
+      }
+      return null;
     }
   </script>
 </body>
 </html>
+
