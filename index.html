@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>AR Plane on Button Click</title>
+  <title>AR Raycast Plane Selection</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     html, body {
@@ -46,20 +46,22 @@
     renderer.xr.enabled = true;
     document.body.appendChild(renderer.domElement);
 
-    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    scene.add(light);
-
-    // ✨ DOM Overlay + AR Button
     document.body.appendChild(ARButton.createButton(renderer, {
       requiredFeatures: ['dom-overlay'],
       domOverlay: { root: document.body }
     }));
 
-    // 👇 Button logic: add a plane in front of the camera
+    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    scene.add(light);
+
+    const planes = []; // Track all added planes
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2(0, 0); // center of the screen
+
     document.getElementById('addPlane').addEventListener('click', () => {
-      const planeGeometry = new THREE.PlaneGeometry(0.5, 0.5);
-      const planeMaterial = new THREE.MeshBasicMaterial({ color: 0xffaa00, side: THREE.DoubleSide });
-      const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+      const geometry = new THREE.PlaneGeometry(0.5, 0.5);
+      const material = new THREE.MeshBasicMaterial({ color: 0xffaa00, side: THREE.DoubleSide });
+      const plane = new THREE.Mesh(geometry, material);
 
       const direction = new THREE.Vector3();
       camera.getWorldDirection(direction);
@@ -67,6 +69,21 @@
       plane.quaternion.copy(camera.quaternion);
 
       scene.add(plane);
+      planes.push(plane);
+    });
+
+    const controller = renderer.xr.getController(0);
+    scene.add(controller);
+
+    controller.addEventListener('select', () => {
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(planes);
+
+      if (intersects.length > 0) {
+        const selected = intersects[0].object;
+        selected.material.color.set(0x00ffff); // change color to cyan
+        console.log("Plane selected:", selected);
+      }
     });
 
     renderer.setAnimationLoop(() => {
