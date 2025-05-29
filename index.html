@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Three.js Fabric.js Drawing</title>
+  <title>Three.js Drawing on Plane</title>
   <style>
     body { margin: 0; }
-    canvas { display: block; }
+    canvas { display: block; touch-action: none; }
   </style>
 </head>
 <body>
@@ -18,9 +18,10 @@
   </script>
   <script type="module">
     import * as THREE from 'three';
-    import { Fabric } from 'https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.esm.js';
 
-    let scene, camera, renderer, plane, fabricCanvas;
+    let scene, camera, renderer, plane, canvas, context, texture;
+    let isDrawing = false;
+    let lastX = 0, lastY = 0;
 
     function init() {
       // Set up scene
@@ -33,14 +34,16 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
 
-      // Create canvas element
-      const canvas = document.createElement('canvas');
+      // Create canvas
+      canvas = document.createElement('canvas');
       canvas.width = 1024;
       canvas.height = 1024;
-      fabricCanvas = new Fabric(canvas);
+      context = canvas.getContext('2d');
+      context.fillStyle = 'white';
+      context.fillRect(0, 0, canvas.width, canvas.height);
 
       // Create texture from canvas
-      const texture = new THREE.CanvasTexture(canvas);
+      texture = new THREE.CanvasTexture(canvas);
 
       // Create plane geometry and material
       const geometry = new THREE.PlaneGeometry(4, 4);
@@ -48,16 +51,53 @@
       plane = new THREE.Mesh(geometry, material);
       scene.add(plane);
 
-      // Handle drawing
-      fabricCanvas.isDrawingMode = true;
-      fabricCanvas.freeDrawingBrush.width = 5;
-      fabricCanvas.freeDrawingBrush.color = '#ff0000';
-
-      fabricCanvas.on('path:created', () => {
-        texture.needsUpdate = true;
-      });
+      // Add event listeners for drawing
+      renderer.domElement.addEventListener('pointerdown', onPointerDown);
+      renderer.domElement.addEventListener('pointermove', onPointerMove);
+      renderer.domElement.addEventListener('pointerup', onPointerUp);
+      renderer.domElement.addEventListener('pointerout', onPointerUp);
 
       animate();
+    }
+
+    function getCanvasCoordinates(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      const vector = new THREE.Vector3(x, y, 0.5);
+      vector.unproject(camera);
+      const dir = vector.sub(camera.position).normalize();
+      const distance = -camera.position.z / dir.z;
+      const pos = camera.position.clone().add(dir.multiplyScalar(distance));
+      const canvasX = (pos.x + 2) / 4 * canvas.width;
+      const canvasY = (1 - (pos.y + 2) / 4) * canvas.height;
+      return { x: canvasX, y: canvasY };
+    }
+
+    function onPointerDown(event) {
+      isDrawing = true;
+      const { x, y } = getCanvasCoordinates(event);
+      lastX = x;
+      lastY = y;
+    }
+
+    function onPointerMove(event) {
+      if (!isDrawing) return;
+      const { x, y } = getCanvasCoordinates(event);
+      context.beginPath();
+      context.moveTo(lastX, lastY);
+      context.lineTo(x, y);
+      context.strokeStyle = 'black';
+      context.lineWidth = 5;
+      context.stroke();
+      context.closePath();
+      lastX = x;
+      lastY = y;
+      texture.needsUpdate = true;
+    }
+
+    function onPointerUp() {
+      isDrawing = false;
     }
 
     function animate() {
